@@ -1,6 +1,7 @@
 #include<stdio.h>
 #include<stdlib.h>
 #include<iostream>
+//#include <sys/time.h> 
 #define ind_ele(n,i,j) n*(i)+j
 #define get_start(l_s,k_s,x) (x-k_s>=0)?x-k_s:(l_s+(x-k_s))
 #define inc(l_s,x) (x+1>=l_s)?0:x+1
@@ -24,28 +25,20 @@ void fill_user(double* mat,int n){
     }
 }
 void print_mat(double* arr,int n){
-    cout<<"entering inside the printing method"<<endl;
     for(int i=0;i<n;i++){
         for(int j=0;j<n;j++){
             cout<<arr[ind_ele(n,i,j)]<<" ";
         }
         cout<<endl;
     }
-    cout<<"outside the printing method"<<endl;
 }
 //this method is not tested yer
 void conv(double* layer,double* kernel,int layer_size,int kernel_size,double* output){
     for(int i=0;i<layer_size;i++){
         for(int j=0;j<layer_size;j++){
-            //these operation are not fully connvected
-            //should we implemented in macro.
             int k_s=(kernel_size-1)/2;
             int l_row_start=get_start(layer_size,k_s,i);
             int l_col_start=get_start(layer_size,k_s,j);
-            cout<<i<<" "<<j<<endl;
-            cout<<"the row start is at "<<l_row_start<<endl;
-            cout<<"the col start is at "<<l_col_start<<endl;
-            cout<<endl;
             double sum=0;
             for(int ik=0;ik<kernel_size;ik++){
                 l_col_start=get_start(layer_size,k_s,j);
@@ -59,22 +52,31 @@ void conv(double* layer,double* kernel,int layer_size,int kernel_size,double* ou
         }
     }
 }
+
+void messaure_normal_time(){
+    int layer_length=512;
+    double* layer=create_matrix(layer_length);
+    fill_random(layer,layer_length);
+    double* output=create_matrix(layer_length);
+    for(int kernel_length=3;kernel_length<512;kernel_length+=2){
+        double* kernel=create_matrix(kernel_length);
+        fill_random(kernel,kernel_length);
+        clock_t start_time;
+        clock_t end_time;
+        start_time=clock();
+        for(int i=0;i<10;i++){
+            conv(layer,kernel,layer_length,kernel_length,output);
+        }
+        end_time=clock();
+        double clock_taken=double(end_time - start_time);
+        clock_taken=clock_taken/10;
+        double time_taken=clock_taken/double(CLOCKS_PER_SEC);
+        cout<<kernel_length<<" "<<time_taken<<endl;
+        delete kernel;
+    }
+}
 int main(){
-    //this is the master test stroke.
-    int l_n=5;
-    int k_n=3;
-    double* layer=create_matrix(l_n);
-    fill_user(layer,l_n);
-    double* kernel=create_matrix(k_n);
-    fill_user(kernel,k_n);
-    double* output=create_matrix(l_n);
-    conv(layer,kernel,l_n,k_n,output);
-    cout<<"all the processing is done"<<endl;
-    cout<<"the layer matrix is "<<endl;
-    print_mat(layer,l_n);
-    cout<<"the kernel matrix is "<<endl;
-    print_mat(kernel,k_n);
-    cout<<"the output matrix is "<<endl;
-    print_mat(output,l_n);
+    messaure_normal_time();
+
     return 0;
 }
