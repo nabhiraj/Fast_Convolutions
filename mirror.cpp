@@ -16,6 +16,11 @@ void fill_random(double* mat,int n){
         mat[i]=rand()%10;
     }
 }
+void fill_constant(double* mat,double c,int n){
+    for(int i=0;i<n*n;i++){
+        mat[i]=c;
+    }
+}
 void fill_user(double* mat,int n){
     for(int i=0;i<n;i++){
         for(int j=0;j<n;j++){
@@ -52,7 +57,27 @@ void conv(double* layer,double* kernel,int layer_size,int kernel_size,double* ou
         }
     }
 }
-
+//now we have to write the code to flip
+//this method is working fine.
+double* preProcessKernel(double* plainKernel,int ini_size,int final_size){//i only will do it.
+    double* res_mat=create_matrix(final_size);
+    fill_constant(res_mat,0,final_size);
+    int ini_row=final_size-1;
+    int ini_col=final_size-1;
+    for(int i=0;i<ini_size;i++){
+        ini_col=final_size-1;
+        for(int j=0;j<ini_size;j++){
+            res_mat[ind_ele(final_size,ini_row,ini_col)]=plainKernel[ind_ele(ini_size,i,j)];
+            ini_col=inc(final_size,ini_col);
+        }
+        ini_row=inc(final_size,ini_row);
+    }
+    return res_mat;
+}
+//we will assume the kernel is already prerpssed
+void fft_conv(double* layer,double* kernel,int layer_size,int kernel_size,double* output){
+    //chalenging code comes here
+}
 void messaure_normal_time(){
     int layer_length=512;
     double* layer=create_matrix(layer_length);
@@ -76,7 +101,15 @@ void messaure_normal_time(){
     }
 }
 int main(){
-    messaure_normal_time();
+    //messaure_normal_time();
+    //testing teh preprocessing of the ekrnel
+    double* kernel=create_matrix(3);
+    fill_user(kernel,3);
+    cout<<"the kernel filter looks like this"<<endl;
+    print_mat(kernel,3);
+    double* processed_kernel=preProcessKernel(kernel,3,5);
+    cout<<"after preprocessing the kernel filter looks like this"<<endl;
+    print_mat(processed_kernel,5);
 
     return 0;
 }
