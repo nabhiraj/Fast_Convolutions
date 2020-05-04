@@ -19,5 +19,13 @@ int main(){
     print_res(in,10);
     cout<<"changing the game"<<endl;
     print_res(out,10);
+    fftw_complex a;
+    a[0]=90;
+    a[1]=45;
+    fftw_complex b;
+    b[0]=2;
+    b[1]=2;
+    cout<<"the real part of c is "<<c[0]<<endl;
+    cout<<"the complex part of c is "<<c[1]<<endl;
     return 0;
 }

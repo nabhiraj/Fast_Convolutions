@@ -1,7 +1,7 @@
 #include<stdio.h>
 #include<stdlib.h>
 #include<iostream>
-//#include <sys/time.h> 
+#include<fftw3.h>
 #define ind_ele(n,i,j) n*(i)+j
 #define get_start(l_s,k_s,x) (x-k_s>=0)?x-k_s:(l_s+(x-k_s))
 #define inc(l_s,x) (x+1>=l_s)?0:x+1
@@ -37,7 +37,6 @@ void print_mat(double* arr,int n){
         cout<<endl;
     }
 }
-//this method is not tested yer
 void conv(double* layer,double* kernel,int layer_size,int kernel_size,double* output){
     for(int i=0;i<layer_size;i++){
         for(int j=0;j<layer_size;j++){
@@ -57,9 +56,29 @@ void conv(double* layer,double* kernel,int layer_size,int kernel_size,double* ou
         }
     }
 }
-//now we have to write the code to flip
-//this method is working fine.
+void flip_col(double* mat,int n){
+    for(int i=0;i<n;i++){
+        for(int j=0;j<n/2;j++){
+            double temp;
+            temp=mat[ind_ele(n,i,j)];
+            mat[ind_ele(n,i,j)]=mat[ind_ele(n,i,n-1-j)];
+            mat[ind_ele(n,i,n-1-j)]=temp;
+        }
+    }
+}
+void flip_row(double* mat,int n){
+    for(int i=0;i<n;i++){
+        for(int j=0;j<n/2;j++){
+            double temp;
+            temp=mat[ind_ele(n,j,i)];
+            mat[ind_ele(n,j,i)]=mat[ind_ele(n,n-j-1,i)];
+            mat[ind_ele(n,n-j-1,i)]=temp;
+        }
+    }
+}
 double* preProcessKernel(double* plainKernel,int ini_size,int final_size){//i only will do it.
+    flip_col(plainKernel,ini_size);
+    flip_row(plainKernel,ini_size);
     double* res_mat=create_matrix(final_size);
     fill_constant(res_mat,0,final_size);
     int ini_row=final_size-1;
@@ -74,9 +93,29 @@ double* preProcessKernel(double* plainKernel,int ini_size,int final_size){//i on
     }
     return res_mat;
 }
-//we will assume the kernel is already prerpssed
-void fft_conv(double* layer,double* kernel,int layer_size,int kernel_size,double* output){
-    //chalenging code comes here
+//this method is not tested yet.
+void mul(fftwf_complex* A,fftwf_complex* B,fftwf_complex* output,int n){
+    for(int i=0;i<n;i++){
+        for(int j=0;j<n;j++){
+            output[ind_ele(n,i,j)][0]=(((A[ind_ele(n,i,j)][0])*(B[ind_ele(n,i,j)][0]))-((A[ind_ele(n,i,j)][1])*(B[ind_ele(n,i,j)][1])));  
+            output[ind_ele(n,i,j)][1]=(((A[ind_ele(n,i,j)][0])*(B[ind_ele(n,i,j)][1]))+((A[ind_ele(n,i,j)][1])*(B[ind_ele(n,i,j)][0])));
+        }
+    }
+}
+
+//this method is not tested yet.
+void fft_conv(float* layer,float* kernel,int filter_size,float* output){
+    fftwf_complex* fft_layer=new fftwf_complex[filter_size*filter_size];
+    fftwf_complex* fft_kernel=new fftwf_complex[filter_size*filter_size];
+    fftwf_plan get_layer=fftwf_plan_dft_r2c_2d(filter_size,filter_size,layer,fft_layer,FFTW_ESTIMATE);
+    fftwf_plan get_kernel=fftwf_plan_dft_r2c_2d(filter_size,filter_size,kernel,fft_kernel,FFTW_ESTIMATE);
+    //now we need to multiply.
+    fftwf_complex* fft_mul=new fftwf_complex[filter_size*filter_size];
+    fftwf_execute(get_layer);
+    fftwf_execute(get_kernel);
+    mul(fft_layer,fft_kernel,fft_mul,filter_size);
+    fftwf_plan get_realMul=fftwf_plan_dft_c2r_2d(filter_size,filter_size,fft_mul,output,FFTW_ESTIMATE);
+    fftwf_execute(get_realMul);
 }
 void messaure_normal_time(){
     int layer_length=512;
@@ -101,15 +140,14 @@ void messaure_normal_time(){
     }
 }
 int main(){
-    //messaure_normal_time();
-    //testing teh preprocessing of the ekrnel
-    double* kernel=create_matrix(3);
-    fill_user(kernel,3);
-    cout<<"the kernel filter looks like this"<<endl;
-    print_mat(kernel,3);
-    double* processed_kernel=preProcessKernel(kernel,3,5);
-    cout<<"after preprocessing the kernel filter looks like this"<<endl;
-    print_mat(processed_kernel,5);
-
+    //testing the flipping operation.
+    double* test_mat=create_matrix(3);
+    fill_user(test_mat,3);
+    flip_col(test_mat,3);
+    cout<<"after the fliping the col"<<endl;
+    print_mat(test_mat,3);
+    cout<<"after fliping the row"<<endl;
+    flip_row(test_mat,3);
+    print_mat(test_mat,3);
     return 0;
 }
