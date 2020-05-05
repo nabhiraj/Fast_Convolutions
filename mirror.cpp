@@ -193,8 +193,8 @@ struct convolution_enviorment{
     fftwf_plan getBack_mul;//forward
     fftwf_plan get_gradient;//backward  done
     fftwf_plan getBackkernel_gradient;//backward done
-    double* aux_mat;//back done
-    double* aux_mat2;//back done
+    //double* aux_mat;//back done
+    //double* aux_mat2;//back done
     double* kernel_gradient_real;//back done
     double* gradients;//back done
     double predicted;//back done
@@ -206,8 +206,8 @@ void insialize_backProp(convolution_enviorment* ce,double lr){
     ce->fft_gradient = new fftwf_complex[tt];
     ce->fft_kernel_gradient=new fftwf_complex[tt];
     ce->kernel_gradient=new fftwf_complex[tt];
-    ce->aux_mat=new double[tt];
-    ce->aux_mat2=new double[tt];
+    //ce->aux_mat=new double[tt];
+    //ce->aux_mat2=new double[tt];
     ce->kernel_gradient_real=new double[tt];
     ce->gradients=new double[tt];
     ce->learning_rate=lr;
@@ -250,6 +250,7 @@ void updatekernel(convolution_enviorment ce){
         }
     }
 }
+/*
 void relu_derivative(double* in,double* out,int n){
     for(int i=0;i<n;i++){
         for(int j=0;j<n;j++){
@@ -260,7 +261,7 @@ void relu_derivative(double* in,double* out,int n){
             }
         }
     }
-}
+}*/
 //code to update the kernel is not included in the backprop.
 void backPropogate(convolution_enviorment ce,double actual_value){
     double temp=2*(ce.predicted-actual_value);
