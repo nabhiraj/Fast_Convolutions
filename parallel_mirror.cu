@@ -8,7 +8,7 @@
 #define ind_ele(n,i,j) n*(i)+j
 #define get_start(l_s,k_s,x) (x-k_s>=0)?x-k_s:(l_s+(x-k_s))
 #define inc(l_s,x) (x+1>=l_s)?0:x+1
-#define NT 2
+#define NT 70
 using namespace std;
 void flip_col(double* mat,int n){
     for(int i=0;i<n;i++){
