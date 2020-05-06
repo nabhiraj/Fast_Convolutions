@@ -348,20 +348,34 @@ void trainIteration(convolution_enviorment ce){
     //cout<<"output after forward propogation is "<<endl;
     //print_mat(ce.real_mul,ce.filter_size);
     ce.predicted=psudoFullyConnected(ce.real_mul,ce.filter_size);
-    cout<<"the predicted value is "<<ce.predicted<<endl;
-    cout<<"the error is "<<(ce.predicted-20)*(ce.predicted-20)<<endl;
     backPropogate(ce,20);
     updatekernel(ce);
 }
 int main(){
-    double* k=create_matrix(3);
-    fill_random(k,3);
-    convolution_enviorment ce=create_convolution_enviorment(5);
+    int k_s;
+    int l_s;
+    cout<<"enter the layer size "<<endl;
+    cin>>l_s;
+    cout<<"enter the kernel size "<<endl;
+    cin>>k_s;
+    double* k=create_matrix(k_s);
+    fill_random(k,k_s);
+    convolution_enviorment ce=create_convolution_enviorment(l_s);
     fill_random(ce.layer,ce.filter_size);
-    insialize_backProp(&ce,0.0001);
-    preProcessKernel_static(k,ce.kernel,3,5);
-    for(int i=0;i<10;i++)
+    insialize_backProp(&ce,0.00000000001);
+    preProcessKernel_static(k,ce.kernel,k_s,l_s);
+    
+
+
+    clock_t start_time;
+    clock_t end_time;
+    start_time=clock();
+    for(int i=0;i<120;i++)
     trainIteration(ce);
+    end_time=clock();
+    double clock_taken=double(end_time - start_time);
+    double time_taken=clock_taken/double(CLOCKS_PER_SEC);
+    cout<<"the time taken is "<<time_taken<<endl;
     return 0;
 }
 
