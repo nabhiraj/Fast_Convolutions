@@ -198,11 +198,6 @@ __global__ void conv_complex(double* src,fftwf_complex* des,int n){
     //NT
     //printf("starting the complex converstion\n");
     int tid=threadIdx.x;
-    //printf("tid is %d\n",tid);
-    //printf("the value of n is %d and value fo NT is",n);
-    if(NT==2){
-        printf("NT is 2");
-    }
     int row_per_thread=n/NT;
     int start_row=tid*row_per_thread;//start row is included.
     int end_row=start_row+row_per_thread;//end row is not included.
@@ -259,6 +254,34 @@ __global__ void sumP(double* arr,double* ac_sum,int n){
         }
     }
 }
+__global__ void fill_constant_parallel(double* grad,double temp,int n){
+    int tid=threadIdx.x;
+    int row_per_thread=n/NT;
+    int start_row=tid*row_per_thread;//start row is included.
+    int end_row=start_row+row_per_thread;//end row is not included.
+    if(tid==NT-1){//last threads flow
+        end_row=n;
+    }
+    for(int i=start_row;i<end_row;i++){
+        for(int j=0;j<n;j++){
+            grad[ind_ele(n,i,j)]=temp;
+        }
+    }
+}
+__global__ void updatekernel(double* kernel,double* kernel_grad,double lr,int n){
+    int tid=threadIdx.x;
+    int row_per_thread=n/NT;
+    int start_row=tid*row_per_thread;//start row is included.
+    int end_row=start_row+row_per_thread;//end row is not included.
+    if(tid==NT-1){//last threads flow
+        end_row=n;
+    }
+    for(int i=start_row;i<end_row;i++){
+        for(int j=0;j<n;j++){
+            kernel[ind_ele(n,i,j)]=kernel[ind_ele(n,i,j)]-(lr*kernel_grad[ind_ele(n,i,j)]);
+        }
+    }
+}
 struct convolution_enviorment{
     //things required for forward propogation
     double* layer;//d
@@ -274,25 +297,34 @@ struct convolution_enviorment{
     double* d_real_mul;//d
     double* d_predicted;//d 
     double* predicted;//d
-
-    fftwf_complex* fft_layer;
-    fftwf_complex* fft_kernel;
-    fftwf_complex* fft_mul;
-    fftwf_complex* mul;
-    fftwf_complex* fft_gradient;
-    fftwf_complex* fft_kernel_gradient;
-    fftwf_complex* kernel_gradient;
-    double* real_mul;
     int filter_size;
     fftwf_plan get_layer;
     fftwf_plan get_kernel;
     fftwf_plan getBack_mul;
+
+    double* d_grad;//d
+    fftwf_complex* d_comp_grad;//d
+    fftwf_complex* d_comp_fft_grad;//dd
+    fftwf_complex* d_comp_fft_kernel_grad;//d
+    fftwf_complex* d_comp_kernel_grad;//d
+    double* d_kernel_grad;
     fftwf_plan get_gradient;
     fftwf_plan getBackkernel_gradient;
-    double* kernel_gradient_real;
-    double* gradients;
     double learning_rate;
 };
+/*
+void insialize_backProp(convolution_enviorment* ce,double lr){
+    int tt=ce->filter_size;
+    tt=tt*tt;
+    ce->fft_gradient = new fftwf_complex[tt];
+    ce->fft_kernel_gradient=new fftwf_complex[tt];
+    ce->kernel_gradient=new fftwf_complex[tt];
+    //ce->aux_mat=new double[tt];
+    //ce->aux_mat2=new double[tt];
+    ce->kernel_gradient_real=new double[tt];
+    ce->gradients=new double[tt];
+    ce->learning_rate=lr;
+}*/
 convolution_enviorment create_convolution_enviormentParellel(int fs){
     convolution_enviorment ce;
     ce.filter_size=fs;
@@ -310,69 +342,83 @@ convolution_enviorment create_convolution_enviormentParellel(int fs){
     cudaMalloc((void**)&ce.d_predicted,sizeof(double));
     ce.predicted=new double();
     *ce.predicted=10;
-    printf("while creation pridected value is %f\n",*ce.predicted);
     return ce;
 }
+void ini_bp(convolution_enviorment* ce,double le){
+    int tt=ce->filter_size;
+    tt=tt*tt;
+    cudaMalloc((void**)&(ce->d_grad),sizeof(double)*tt);
+    cudaMalloc((void**)&(ce->d_kernel_grad),sizeof(double)*tt);
+    cudaMalloc((void**)&(ce->d_comp_grad),sizeof(fftwf_complex)*tt);
+    cudaMalloc((void**)&(ce->d_comp_fft_grad),sizeof(fftwf_complex)*tt);
+    cudaMalloc((void**)&(ce->d_comp_fft_kernel_grad),sizeof(fftwf_complex)*tt);
+    cudaMalloc((void**)&(ce->d_comp_kernel_grad),sizeof(fftwf_complex)*tt);
+    ce->learning_rate=le;
+}
+void backPropogate(convolution_enviorment ce,double actual_value){
+    //cout<<"mse error is "<<(*(ce.predicted)-actual_value)*(*(ce.predicted)-actual_value)<<endl;
+    //cout<<"entering backprog"<<endl;
+    double temp=2*(*(ce.predicted)-actual_value);
+    fill_constant_parallel<<<1,NT>>>(ce.d_grad,temp,ce.filter_size);
+    cudaDeviceSynchronize();
+    //cout<<"filling of constant done"<<endl;
+    conv_complex<<<1,NT>>>(ce.d_grad,ce.d_comp_grad,ce.filter_size);
+    cudaDeviceSynchronize();
+    //cout<<"convertion into complex"<<endl;
+    ce.get_gradient=fftwf_plan_dft_2d(ce.filter_size,ce.filter_size,ce.d_comp_grad,ce.d_comp_fft_grad,FFTW_FORWARD,FFTW_ESTIMATE);
+    fftwf_execute(ce.get_gradient);
+    poin_mul_parallel<<<1,NT>>>(ce.d_comp_fft_grad,ce.d_fft_layer,ce.d_comp_fft_kernel_grad,ce.filter_size);
+    cudaDeviceSynchronize();
+    ce.getBackkernel_gradient=fftwf_plan_dft_2d(ce.filter_size,ce.filter_size,ce.d_comp_fft_kernel_grad,ce.d_comp_kernel_grad,FFTW_BACKWARD,FFTW_ESTIMATE);
+    fftwf_execute(ce.getBackkernel_gradient);
+    //we need to scale this.
+    scale_p<<<1,NT>>>(ce.d_comp_kernel_grad,ce.filter_size);
+    cudaDeviceSynchronize();
+    to_real_p<<<1,NT>>>(ce.d_comp_kernel_grad,ce.d_kernel_grad,ce.filter_size);
+    cudaDeviceSynchronize();
+    updatekernel<<<1,NT>>>(ce.d_kernel,ce.d_kernel_grad,ce.learning_rate,ce.filter_size);
+    cudaDeviceSynchronize();
+}
+void fixKernel(convolution_enviorment ce){
+    cudaMemcpy(ce.d_kernel,ce.kernel,ce.filter_size*ce.filter_size,cudaMemcpyHostToDevice);
+}
 void forwardPass_parallel(convolution_enviorment ce){
-    cout<<"starting the routine"<<endl;
+    //cout<<"starting the routine"<<endl;
     int fs=ce.filter_size*ce.filter_size;
     cudaMemcpy(ce.d_layer,ce.layer,fs,cudaMemcpyHostToDevice);
-    cudaMemcpy(ce.d_kernel,ce.kernel,fs,cudaMemcpyHostToDevice);
-    cout<<"senf the kernel and layer to the device"<<endl;
+    //cudaMemcpy(ce.d_kernel,ce.kernel,fs,cudaMemcpyHostToDevice);
+    //cout<<"senf the kernel and layer to the device"<<endl;
     conv_complex<<<1,NT>>>(ce.d_layer,ce.d_comp_layer,ce.filter_size);
     conv_complex<<<1,NT>>>(ce.d_kernel,ce.d_comp_kernel,ce.filter_size);
-    cout<<"convertin them to complex"<<endl;
+    //cout<<"convertin them to complex"<<endl;
     ce.get_layer=fftwf_plan_dft_2d(ce.filter_size,ce.filter_size,ce.d_comp_layer,ce.d_fft_layer,FFTW_FORWARD,FFTW_ESTIMATE);
     ce.get_kernel=fftwf_plan_dft_2d(ce.filter_size,ce.filter_size,ce.d_comp_kernel,ce.d_fft_kernel,FFTW_FORWARD,FFTW_ESTIMATE);
     fftwf_execute(ce.get_layer);
     fftwf_execute(ce.get_kernel);    
     cudaDeviceSynchronize();
-    cout<<"doing the fft transform"<<endl;
+    //cout<<"doing the fft transform"<<endl;
     poin_mul_parallel<<<1,NT>>>(ce.d_fft_kernel,ce.d_fft_layer,ce.d_fft_mul,ce.filter_size);
     cudaDeviceSynchronize();
-    cout<<"done point wise multiplication"<<endl;
+    //cout<<"done point wise multiplication"<<endl;
     ce.getBack_mul=fftwf_plan_dft_2d(ce.filter_size,ce.filter_size,ce.d_fft_mul,ce.d_mul,FFTW_BACKWARD,FFTW_ESTIMATE);
     fftwf_execute(ce.getBack_mul);
     cudaDeviceSynchronize();
-    cout<<"inverse fft done"<<endl;
-    scale_p<<<1,NT>>>(ce.d_mul,ce.filter_size);
-    
+    //cout<<"inverse fft done"<<endl;
+    scale_p<<<1,NT>>>(ce.d_mul,ce.filter_size);   
     cudaDeviceSynchronize();
-    cout<<"scalling is done"<<endl;
+    //cout<<"scalling is done"<<endl;
     to_real_p<<<1,NT>>>(ce.d_mul,ce.d_real_mul,ce.filter_size);
-    
     cudaDeviceSynchronize();
-    cout<<"convertion to real done"<<endl;
+    //cout<<"convertion to real done"<<endl;
     sumP<<<1,NT>>>(ce.d_real_mul,ce.d_predicted,ce.filter_size);
     cudaMemcpy(ce.predicted,ce.d_predicted,sizeof(double),cudaMemcpyDeviceToHost);
-    cout<<"summation doen and copy to host done"<<endl;
+    //cout<<"summation doen and copy to host done"<<endl;
+}
+void trainIteration(convolution_enviorment ce){
+    forwardPass_parallel(ce);
+    backPropogate(ce,30);
 }
 
-void insialize_backProp(convolution_enviorment* ce,double lr){
-    int tt=ce->filter_size;
-    tt=tt*tt;
-    ce->fft_gradient = new fftwf_complex[tt];
-    ce->fft_kernel_gradient=new fftwf_complex[tt];
-    ce->kernel_gradient=new fftwf_complex[tt];
-    //ce->aux_mat=new double[tt];
-    //ce->aux_mat2=new double[tt];
-    ce->kernel_gradient_real=new double[tt];
-    ce->gradients=new double[tt];
-    ce->learning_rate=lr;
-}
-convolution_enviorment create_convolution_enviorment(int fs){
-    convolution_enviorment myenv;
-    myenv.filter_size=fs;
-    myenv.layer=create_matrix(fs);
-    myenv.kernel=create_matrix(fs);
-    myenv.real_mul=create_matrix(fs);
-    myenv.fft_kernel=new fftwf_complex[fs*fs];
-    myenv.fft_layer=new fftwf_complex[fs*fs];
-    myenv.fft_mul=new fftwf_complex[fs*fs];
-    myenv.mul=new fftwf_complex[fs*fs];
-    //myenv.aux_mat=create_matrix(myenv.filter_size);
-    return myenv;
-}
 void mat_mul(double* a,double* b,double* res,int n){
     for (int i = 0; i<n;i++) {
         for (int j =0; j<n;j++) {
@@ -382,97 +428,10 @@ void mat_mul(double* a,double* b,double* res,int n){
         }
     }
 }
-/*
-void mat_one_minus_this(double* a,double* res,int n){
-    for(int i=0;i<n;i++){
-        for(int j=0;j<n;j++){
-            res[ind_ele(n,i,j)]=1-a[ind_ele(n,i,j)];
-        }
-    }
-}*/
-
-void updatekernel(convolution_enviorment ce){
-    int n=ce.filter_size;
-    for(int i=0;i<n;i++){
-        for(int j=0;j<n;j++){
-            ce.kernel[ind_ele(n,i,j)]-=(ce.learning_rate*ce.kernel_gradient_real[ind_ele(n,i,j)]);
-        }
-    }
-}
-
-/*
-void relu_derivative(double* in,double* out,int n){
-    for(int i=0;i<n;i++){
-        for(int j=0;j<n;j++){
-            if(in[ind_ele(n,i,j)]>0){
-                out[ind_ele(n,i,j)]=1;
-            }else{
-                out[ind_ele(n,i,j)]=0;
-            }
-        }
-    }
-}*/
-
-//code to update the kernel is not included in the backprop.
-
-void backPropogate(convolution_enviorment ce,double actual_value){
-    /*
-    double temp=2*(ce.predicted-actual_value);
-    fill_constant(ce.gradients,temp,ce.filter_size);
-    ce.get_gradient=fftwf_plan_dft_2d(ce.filter_size,ce.filter_size,get_complex_representation(ce.gradients,ce.filter_size),ce.fft_gradient,FFTW_FORWARD,FFTW_ESTIMATE);
-    fftwf_execute(ce.get_gradient);
-    mul(ce.fft_gradient,ce.fft_layer,ce.fft_kernel_gradient,ce.filter_size);
-    ce.getBackkernel_gradient=fftwf_plan_dft_2d(ce.filter_size,ce.filter_size,ce.fft_kernel_gradient,ce.kernel_gradient,FFTW_BACKWARD,FFTW_ESTIMATE);
-    fftwf_execute(ce.getBackkernel_gradient);
-    scale_comp(ce.kernel_gradient,ce.filter_size);
-    write_to_real_mat(ce.kernel_gradient,ce.kernel_gradient_real,ce.filter_size);*/
-}
 
 
-/*
-//activation functioin needs to added here.
-void forwardPass_convolution_enviorment(convolution_enviorment ce){
-    ce.get_layer=fftwf_plan_dft_2d(ce.filter_size,ce.filter_size,get_complex_representation(ce.layer,ce.filter_size),ce.fft_layer,FFTW_FORWARD,FFTW_ESTIMATE);
-    ce.get_kernel=fftwf_plan_dft_2d(ce.filter_size,ce.filter_size,get_complex_representation(ce.kernel,ce.filter_size),ce.fft_kernel,FFTW_FORWARD,FFTW_ESTIMATE);
-    
-    fftwf_execute(ce.get_layer);
-    
-    fftwf_execute(ce.get_kernel);
-    
-    mul(ce.fft_layer,ce.fft_kernel,ce.fft_mul,ce.filter_size);
-    
-    ce.getBack_mul=fftwf_plan_dft_2d(ce.filter_size,ce.filter_size,ce.fft_mul,ce.mul,FFTW_BACKWARD,FFTW_ESTIMATE);
-    
-    fftwf_execute(ce.getBack_mul);
-    
-    scale_comp(ce.mul,ce.filter_size);
-    
-    write_to_real_mat(ce.mul,ce.real_mul,ce.filter_size);
-}
-*/
-//this method is incomplete.
-void destroy_convolutional_enviorment(convolution_enviorment ce){
-    delete[] ce.fft_kernel;
-    delete[] ce.fft_layer;
-    delete[] ce.fft_mul;
-    delete[] ce.mul;
-    delete[] ce.layer;
-    delete[] ce.kernel;
-    delete[] ce.real_mul;
-    //and destroy other plans.
-} 
 
 
-//method will get changes a lot
-double psudoFullyConnected(double* output,int n){
-    double sum=0;
-    for(int i=0;i<n;i++){
-        for(int j=0;j<n;j++){
-            sum+=output[ind_ele(n,i,j)];
-        }
-    }
-    return sum;
-}
 void messaure_normal_time(){
     int layer_length=512;
     double* layer=create_matrix(layer_length);
@@ -499,80 +458,38 @@ void messaure_normal_time(){
 //before we need to set the kernel we need to preprocess teh kernel
 //we need to set the layer
 //data set is not coded in it yet
-/*
-void trainIteration(convolution_enviorment ce){
-    cout<<"doing forward pass"<<endl;
-    forwardPass_convolution_enviorment(ce);
-    //cout<<"output after forward propogation is "<<endl;
-    //print_mat(ce.real_mul,ce.filter_size);
-    cout<<"applying fully connected layer"<<endl;
-    ce.predicted=psudoFullyConnected(ce.real_mul,ce.filter_size);
-    cout<<"the predicted value is "<<ce.predicted<<endl;
-    cout<<"the error is "<<(ce.predicted-20)*(ce.predicted-20)<<endl;
-    backPropogate(ce,20);
-    cout<<"back propogation done"<<endl;
-    updatekernel(ce);
-    cout<<"kernel updated"<<endl;
-}*/
+
+
+
 int main(){
-    cout<<"starting the main program"<<endl;
-    convolution_enviorment ce=create_convolution_enviormentParellel(10);
-    double* k=create_matrix(5);
-    fill_random(ce.layer,10);
-    //fill_random(k,5);
-    fill_constant(k,20,5);
-    preProcessKernel_static(k,ce.kernel,5,10);
-    cout<<"till forwar pass everything is cool"<<endl;
-    forwardPass_parallel(ce);
-    cout<<"the pridicted value is "<<*ce.predicted<<endl;
-    cout<<"working till ending"<<endl;
+    cout<<"enter layer size"<<endl;
+    int l_s;
+    cin>>l_s;
+    int k_s;
+    cout<<"enter kernel size"<<endl;
+    cin>>k_s;
+    if(k_s%2==0){
+        cout<<"kernel should be odd"<<endl;
+        return 0;
+    }
+    convolution_enviorment ce=create_convolution_enviormentParellel(l_s);
+    ini_bp(&ce,0.00000000001);
+    double* k=create_matrix(k_s);
+    fill_random(ce.layer,l_s);
+    fill_constant(k,20,k_s);
+    preProcessKernel_static(k,ce.kernel,k_s,l_s);
+    fixKernel(ce);
+
+    clock_t start_time;
+    clock_t end_time;
+    start_time=clock();
+    for(int i=0;i<120;i++)
+    trainIteration(ce);
+    end_time=clock();
+    double clock_taken=double(end_time - start_time);
+    double time_taken=clock_taken/double(CLOCKS_PER_SEC);
+    cout<<"the time taken is "<<time_taken<<endl;
     return 0;
 }
-
-
-
-
-
-
 //layer=[[1,1,1,2,1],[8,3,2,6,2],[4,5,6,3,3],[1,1,1,1,1],[3,3,3,4,5]]
 //kernel=[[1,1,2],[3,1,2],[4,5,5]]
-/*
-
-convolution_enviorment ce=create_convolution_enviorment(5);
-    double* kernel=create_matrix(3);
-    cout<<"enter the value in the layer"<<endl;
-    fill_user(ce.layer,5);
-    cout<<"enter the value in the kernel"<<endl;
-    fill_user(kernel,3);
-    preProcessKernel_static(kernel,ce.kernel,3,5);
-    cout<<"doing the forward pass"<<endl;
-    forwardPass_convolution_enviorment(ce);
-    cout<<"the output generated by the forward pass is "<<endl;
-    print_mat(ce.real_mul,ce.filter_size);
-    print_comp_mat(ce.mul,ce.filter_size);
-    return 0;
-
-
-
-
-
-
-
-
-
-double* l=create_matrix(5);
-    double* k=create_matrix(3);
-    cout<<"enter the elements of the layler"<<endl;
-    fill_user(l,5);
-    cout<<"enter the elemnts of the kernel"<<endl;
-    fill_user(k,3);
-    double* ck=preProcessKernel(k,3,5);
-    fftwf_complex* output=new fftwf_complex[5*5];
-    double* output2=create_matrix(5);
-    fft_conv(l,ck,5,output);
-    conv(l,k,5,3,output2);
-    cout<<"the convolution operation gives"<<endl;
-    print_comp_mat(output,5);
-    print_mat(output2,5);
-
-*/
